@@ -7,6 +7,7 @@ import math
 import torch
 import torch.nn as nn
 from torch.utils.checkpoint import checkpoint
+from einops import rearrange
 
 from timm.models.vision_transformer import Block
 
