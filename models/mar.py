@@ -80,7 +80,7 @@ class MAR(nn.Module):
 
         # --------------------------------------------------------------------------
         # MAR decoder specifics
-        self.decoder_embed = nn.Linear(encoder_embed_dim, decoder_embed_dim, bias=True)
+        self.ecoder_embed = nn.Linear(encoder_embed_dim, decoder_embed_dim, bias=True)
         self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
         self.decoder_pos_embed_learned = nn.Parameter(torch.zeros(1, self.seq_len + self.buffer_size, decoder_embed_dim))
 
@@ -130,24 +130,27 @@ class MAR(nn.Module):
                 nn.init.constant_(m.weight, 1.0)
 
     def patchify(self, x):
-        bsz, c, h, w = x.shape
-        p = self.patch_size
-        h_, w_ = h // p, w // p
+        # bsz, c, h, w = x.shape
+        assert 4 == x.dim() 
+        p = q = self.patch_size
+        # h_, w_ = h // p, w // p
 
-        x = x.reshape(bsz, c, h_, p, w_, p)
-        x = torch.einsum('nchpwq->nhwcpq', x)
-        x = x.reshape(bsz, h_ * w_, c * p ** 2)
+        # x = x.reshape(bsz, c, h_, p, w_, p)
+        # x = torch.einsum('nchpwq->nhwcpq', x)
+        # x = x.reshape(bsz, h_ * w_, c * p ** 2)
+        x = rearrange(x, 'b c (h p) (w q) -> b (h w) (c p q)', p=p, q=q)
         return x  # [n, l, d]
 
     def unpatchify(self, x):
         bsz = x.shape[0]
-        p = self.patch_size
+        p = q = self.patch_size
         c = self.vae_embed_dim
         h_, w_ = self.seq_h, self.seq_w
 
-        x = x.reshape(bsz, h_, w_, c, p, p)
-        x = torch.einsum('nhwcpq->nchpwq', x)
-        x = x.reshape(bsz, c, h_ * p, w_ * p)
+        # x = x.reshape(bsz, h_, w_, c, p, p)
+        # x = torch.einsum('nhwcpq->nchpwq', x)
+        # x = x.reshape(bsz, c, h_ * p, w_ * p)
+        x = rearrange(x, 'b (h w) (c p q) -> b c (h p) (w q)', c=c, h=h_, w=w_, p=p,q=q)
         return x  # [n, c, h, w]
 
     def sample_orders(self, bsz):
@@ -171,6 +174,16 @@ class MAR(nn.Module):
         return mask
 
     def forward_mae_encoder(self, x, mask, class_embedding):
+        """_summary_
+
+        Args:
+            x (_type_): _description_
+            mask (_type_): _description_
+            class_embedding (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
         x = self.z_proj(x)
         bsz, seq_len, embed_dim = x.shape
 
