@@ -10,12 +10,18 @@ nohup.out
 ref*
 core*
 # results and checkpoints
-checkpoints
-checkpoints*
+checkpoints/*
+checkpoints*/*
+!checkpoints/.gitkeep
 results*
-output*
 pretrained*
 datasets
+
+data/*
+!data/.gitkeep
+output/*
+!output/.gitkeep
+
 
 # C extensions
 *.so
