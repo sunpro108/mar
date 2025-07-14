@@ -1,7 +1,7 @@
 from functools import partial
 
 import numpy as np
-from tqdm import tqdm
+from tqdm.auto import tqdm
 import scipy.stats as stats
 import math
 import torch
@@ -80,7 +80,7 @@ class MAR(nn.Module):
 
         # --------------------------------------------------------------------------
         # MAR decoder specifics
-        self.ecoder_embed = nn.Linear(encoder_embed_dim, decoder_embed_dim, bias=True)
+        self.decoder_embed = nn.Linear(encoder_embed_dim, decoder_embed_dim, bias=True)
         self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
         self.decoder_pos_embed_learned = nn.Parameter(torch.zeros(1, self.seq_len + self.buffer_size, decoder_embed_dim))
 
@@ -184,27 +184,36 @@ class MAR(nn.Module):
         Returns:
             _type_: _description_
         """
+        print(x.shape, mask.shape, class_embedding.shape)
         x = self.z_proj(x)
+        print('after z_proj x.shape:',x.shape) 
         bsz, seq_len, embed_dim = x.shape
 
         # concat buffer
         x = torch.cat([torch.zeros(bsz, self.buffer_size, embed_dim, device=x.device), x], dim=1)
+        print('after concat buffer x.shape:', x.shape)
         mask_with_buffer = torch.cat([torch.zeros(x.size(0), self.buffer_size, device=x.device), mask], dim=1)
+        print('after concat buffer mask_with_buffer.shape:', mask_with_buffer.shape)
 
         # random drop class embedding during training
         if self.training:
             drop_latent_mask = torch.rand(bsz) < self.label_drop_prob
             drop_latent_mask = drop_latent_mask.unsqueeze(-1).cuda().to(x.dtype)
             class_embedding = drop_latent_mask * self.fake_latent + (1 - drop_latent_mask) * class_embedding
-
+        _c = class_embedding.unsqueeze(1)
+        print('class_embedding shape:',_c.shape)
         x[:, :self.buffer_size] = class_embedding.unsqueeze(1)
 
         # encoder position embedding
+        print('before add pos embed x.shape:', x.shape)
         x = x + self.encoder_pos_embed_learned
+        print('after add pos embed x.shape:', x.shape)
         x = self.z_proj_ln(x)
+        print('after ln x.shape:', x.shape)
 
         # dropping
         x = x[(1-mask_with_buffer).nonzero(as_tuple=True)].reshape(bsz, -1, embed_dim)
+        print('after drop x.shape:', x.shape)
 
         # apply Transformer blocks
         if self.grad_checkpointing and not torch.jit.is_scripting():
@@ -213,13 +222,17 @@ class MAR(nn.Module):
         else:
             for block in self.encoder_blocks:
                 x = block(x)
+        print('after block x.shape:', x.shape)
         x = self.encoder_norm(x)
+        print('after norm x.shape:', x.shape)
 
         return x
 
     def forward_mae_decoder(self, x, mask):
 
+        print('input x.shape:',x.shape)
         x = self.decoder_embed(x)
+        print('embeded x.shape:',x.shape)
         mask_with_buffer = torch.cat([torch.zeros(x.size(0), self.buffer_size, device=x.device), mask], dim=1)
 
         # pad mask tokens
@@ -227,8 +240,11 @@ class MAR(nn.Module):
         x_after_pad = mask_tokens.clone()
         x_after_pad[(1 - mask_with_buffer).nonzero(as_tuple=True)] = x.reshape(x.shape[0] * x.shape[1], x.shape[2])
 
+        print('x_after_pad.shape:',x_after_pad.shape)
+
         # decoder position embedding
         x = x_after_pad + self.decoder_pos_embed_learned
+        print('add pos embed x.shape:',x.shape)
 
         # apply Transformer blocks
         if self.grad_checkpointing and not torch.jit.is_scripting():
@@ -237,10 +253,14 @@ class MAR(nn.Module):
         else:
             for block in self.decoder_blocks:
                 x = block(x)
+        print('block x.shape:',x.shape)
         x = self.decoder_norm(x)
+        print('decoder norm x.shape:',x.shape)
 
         x = x[:, self.buffer_size:]
+        print('remove cls embed x.shape:',x.shape)
         x = x + self.diffusion_pos_embed_learned
+        print('add diffusion pos embed x.shape:',x.shape)
         return x
 
     def forward_loss(self, z, target, mask):

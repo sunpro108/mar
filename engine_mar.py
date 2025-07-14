@@ -65,7 +65,8 @@ def train_one_epoch(model, vae,
             x = posterior.sample().mul_(0.2325)
 
         # forward
-        with torch.cuda.amp.autocast():
+        # with torch.cuda.amp.autocast(): # for torch 2.x
+        with torch.amp.autocast('cuda'):
             loss = model(x, labels)
 
         loss_value = loss.item()

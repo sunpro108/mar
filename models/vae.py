@@ -472,6 +472,7 @@ class AutoencoderKL(nn.Module):
 
     def encode(self, x):
         h = self.encoder(x)
+        print()
         moments = self.quant_conv(h)
         if not self.use_variational:
             moments = torch.cat((moments, torch.ones_like(moments)), 1)
