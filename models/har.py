@@ -236,6 +236,65 @@ class HAR(nn.Module):
 
         return x
 
+    def forward_mae_encoder_no_drop2(self, x, g, mask, class_embedding):
+        """_summary_
+
+        Args:
+            x (_type_): _description_
+            mask (_type_): _description_
+            class_embedding (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
+        x[mask.nonzero(as_tuple=True)] = g[mask.nonzero(as_tuple=True)]
+        print(x.shape, mask.shape, class_embedding.shape)
+        x = self.z_proj(x)
+        print('after z_proj x.shape:',x.shape) 
+        bsz, seq_len, embed_dim = x.shape
+
+        # concat buffer
+        x = torch.cat([torch.zeros(bsz, self.buffer_size, embed_dim, device=x.device), x], dim=1)
+        print('after concat buffer x.shape:', x.shape)
+        # mask_with_buffer = torch.cat([torch.zeros(x.size(0), self.buffer_size, device=x.device), mask], dim=1)
+        # print('after concat buffer mask_with_buffer.shape:', mask_with_buffer.shape)
+
+        # random drop class embedding during training
+        if self.training:
+            drop_latent_mask = torch.rand(bsz) < self.label_drop_prob
+            drop_latent_mask = drop_latent_mask.unsqueeze(-1).to(dtype=x.dtype,device=x.device)
+            class_embedding = drop_latent_mask * self.fake_latent + (1 - drop_latent_mask) * class_embedding
+        _c = class_embedding.unsqueeze(1)
+        print('class_embedding shape:',_c.shape)
+        x[:, :self.buffer_size] = class_embedding.unsqueeze(1)
+
+        # encoder position embedding
+        print('before add pos embed x.shape:', x.shape)
+        x = x + self.encoder_pos_embed_learned
+        print('after add pos embed x.shape:', x.shape)
+        x = self.z_proj_ln(x)
+        print('after ln x.shape:', x.shape)
+
+        # dropping masked region
+        # x = x[(1-mask_with_buffer).nonzero(as_tuple=True)].reshape(bsz, -1, embed_dim)
+        # 1. masked region: gray
+        # 2. flatten image to patch sequence
+        print('after drop x.shape:', x.shape)
+
+        # apply Transformer blocks
+        if self.grad_checkpointing and not torch.jit.is_scripting():
+            for block in self.encoder_blocks:
+                x = checkpoint(block, x)
+        else:
+            for block in self.encoder_blocks:
+                x = block(x)
+        print('after block x.shape:', x.shape)
+        x = self.encoder_norm(x)
+        print('after norm x.shape:', x.shape)
+
+        return x
+    
+
     def forward_mae_encoder(self, x, mask, class_embedding):
         """_summary_
 
@@ -291,6 +350,42 @@ class HAR(nn.Module):
         x = self.encoder_norm(x)
         print('after norm x.shape:', x.shape)
 
+        return x
+    
+    def forward_mae_decoder_no_drop(self, x):
+
+        print('input x.shape:',x.shape)
+        x = self.decoder_embed(x)
+        print('embeded x.shape:',x.shape)
+        # mask_with_buffer = torch.cat([torch.zeros(x.size(0), self.buffer_size, device=x.device), mask], dim=1)
+
+        # # pad mask tokens
+        # mask_tokens = self.mask_token.repeat(mask_with_buffer.shape[0], mask_with_buffer.shape[1], 1).to(x.dtype)
+        # x_after_pad = mask_tokens.clone()
+        # x_after_pad[(1 - mask_with_buffer).nonzero(as_tuple=True)] = x.reshape(x.shape[0] * x.shape[1], x.shape[2])
+        x_after_pad = x.clone()
+
+        print('x_after_pad.shape:',x_after_pad.shape)
+
+        # decoder position embedding
+        x = x_after_pad + self.decoder_pos_embed_learned
+        print('add pos embed x.shape:',x.shape)
+
+        # apply Transformer blocks
+        if self.grad_checkpointing and not torch.jit.is_scripting():
+            for block in self.decoder_blocks:
+                x = checkpoint(block, x)
+        else:
+            for block in self.decoder_blocks:
+                x = block(x)
+        print('block x.shape:',x.shape)
+        x = self.decoder_norm(x)
+        print('decoder norm x.shape:',x.shape)
+
+        x = x[:, self.buffer_size:]
+        print('remove cls embed x.shape:',x.shape)
+        x = x + self.diffusion_pos_embed_learned
+        print('add diffusion pos embed x.shape:',x.shape)
         return x
 
     def forward_mae_decoder(self, x, mask):
