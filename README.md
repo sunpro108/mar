@@ -67,7 +67,7 @@ For convenience, our pre-trained MAR models can be downloaded directly here as w
 Given that our data augmentation consists of simple center cropping and random flipping, 
 the VAE latents can be pre-computed and saved to `CACHED_PATH` to save computations during MAR training:
 
-```
+```bash
 torchrun --nproc_per_node=8 --nnodes=1 --node_rank=0 \
 main_cache.py \
 --img_size 256 --vae_path pretrained_models/vae/kl16.ckpt --vae_embed_dim 16 \

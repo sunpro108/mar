@@ -11,13 +11,12 @@ from torch.utils.tensorboard import SummaryWriter
 import torchvision.transforms as transforms
 
 import util.misc as misc
-from util.loader import ImageFolderWithFilename
+from datasets import IHarmony4Dataset
 
 from models.vae import AutoencoderKL
 from engine_mar import cache_latents
 
 from util.crop import center_crop_arr
-
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Cache VAE latents', add_help=False)
@@ -75,25 +74,18 @@ def main(args):
 
     num_tasks = misc.get_world_size()
     global_rank = misc.get_rank()
+    # torch.distributed.init_process_group(backend='nccl', world_size=num_tasks, rank=global_rank)
 
     # augmentation following DiT and ADM
-    transform_train = transforms.Compose([
-        # transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, args.img_size)),
-        transforms.Resize((256,256)),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
-    ])
-
-    dataset_train = ImageFolderWithFilename(os.path.join(args.data_path, 'train'), transform=transform_train)
-    print(dataset_train)
+    dataset_train = IHarmony4Dataset(args.data_path)
+    
 
     sampler_train = torch.utils.data.DistributedSampler(
         dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=False,
     )
     print("Sampler_train = %s" % str(sampler_train))
 
-    data_loader_train = torch.utils.data.DataLoader(
+    data_loader = torch.utils.data.DataLoader(
         dataset_train, sampler=sampler_train,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
@@ -107,18 +99,53 @@ def main(args):
     # training
     print(f"Start caching VAE latents")
     start_time = time.time()
-    cache_latents(
-        vae,
-        data_loader_train,
-        device,
-        args=args
-    )
+
+    # def cache_latents_iharmony4(
+    #     vae, 
+    #     data_loader: Iterable,
+    #     device: torch.device,
+    #     args=None
+    # ):
+    metric_logger = misc.MetricLogger(delimiter="  ")
+    header = 'Caching: '
+    print_freq = 20
+
+    for data_iter_step, (samples, samples_gray, paths) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+
+        samples = samples.to(device, non_blocking=True)
+        samples_gray = samples_gray.to(device, non_blocking=True)
+        samples = torch.cat([samples, samples_gray], dim=0)
+
+        with torch.no_grad():
+            posterior = vae.encode(samples)
+            moments = posterior.parameters
+            posterior_flip = vae.encode(samples.flip(dims=[3]))
+            moments_flip = posterior_flip.parameters
+
+        for i, path in enumerate(paths):
+            save_path = os.path.join(args.cached_path, path + '.npz')
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            np.savez(save_path, moments=moments[i].cpu().numpy(), moments_flip=moments_flip[i].cpu().numpy())
+
+        if misc.is_dist_avail_and_initialized():
+            torch.cuda.synchronize()
+        
+    # cache_latents(
+    #     vae,
+    #     data_loader_train,
+    #     device,
+    #     args=args
+    # )
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Caching time {}'.format(total_time_str))
+
+    torch.distributed.destroy_process_group()
 
 
 if __name__ == '__main__':
     args = get_args_parser()
     args = args.parse_args()
     main(args)
+
+    

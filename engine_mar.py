@@ -222,6 +222,9 @@ def evaluate(model_without_ddp, vae, ema_params, args, epoch, batch_size=16, log
     time.sleep(10)
 
 
+
+
+
 def cache_latents(vae,
                   data_loader: Iterable,
                   device: torch.device,
